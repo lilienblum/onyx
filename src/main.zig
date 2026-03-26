@@ -21,7 +21,7 @@ fn detectSource(ref: cli.PackageRef) SourceType {
 }
 
 // x-release-please-start-version
-pub const version = "0.0.0";
+pub const version = "1.0.0";
 // x-release-please-end
 
 pub fn main() !void {
