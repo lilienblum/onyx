@@ -17,6 +17,7 @@
   "packages": {
     ".": {
       "component": "onyx",
+      "release-as": "0.1.0",
       "extra-files": [
         "src/main.zig"
       ]
