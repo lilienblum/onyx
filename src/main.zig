@@ -87,10 +87,7 @@ fn acquireLock(allocator: std.mem.Allocator) !std.fs.File {
     const data_dir = try xdg.dataDir(allocator);
     defer allocator.free(data_dir);
 
-    std.fs.makeDirAbsolute(data_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    try xdg.makeDirAbsoluteRecursive(data_dir);
 
     const lock_path = try std.fmt.allocPrint(allocator, "{s}/lock", .{data_dir});
     defer allocator.free(lock_path);
@@ -279,10 +276,7 @@ fn installThirdParty(allocator: std.mem.Allocator, ref: cli.PackageRef, src_type
         const cache_dir = try xdg.cacheDir(allocator);
         defer allocator.free(cache_dir);
 
-        std.fs.makeDirAbsolute(cache_dir) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        try xdg.makeDirAbsoluteRecursive(cache_dir);
 
         const archive_path = try std.fmt.allocPrint(allocator, "{s}/{s}.tar.gz", .{ cache_dir, pkg.name });
         defer allocator.free(archive_path);

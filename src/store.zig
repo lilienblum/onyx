@@ -155,10 +155,7 @@ pub const Database = struct {
     pub fn save(self: *Database, path: []const u8) !void {
         // Ensure parent directory exists
         if (std.fs.path.dirname(path)) |dir| {
-            std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
-                error.PathAlreadyExists => {},
-                else => return err,
-            };
+            try xdg.makeDirAbsoluteRecursive(dir);
         }
 
         var aw: std.Io.Writer.Allocating = .init(self.allocator);
@@ -347,10 +344,7 @@ pub const Database = struct {
         const bin_dir_path = try xdg.binDir(allocator);
         defer allocator.free(bin_dir_path);
 
-        std.fs.makeDirAbsolute(bin_dir_path) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        try xdg.makeDirAbsoluteRecursive(bin_dir_path);
 
         var bin_dir = try std.fs.openDirAbsolute(bin_dir_path, .{});
         defer bin_dir.close();

@@ -219,10 +219,7 @@ fn ensureIndexInner(allocator: std.mem.Allocator, refresh: bool) ![]const u8 {
     const cache_dir = try xdg.cacheDir(allocator);
     defer allocator.free(cache_dir);
 
-    std.fs.makeDirAbsolute(cache_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    try xdg.makeDirAbsoluteRecursive(cache_dir);
 
     const index_path = try std.fmt.allocPrint(allocator, "{s}/index.json", .{cache_dir});
     defer allocator.free(index_path);

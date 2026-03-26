@@ -43,6 +43,20 @@ pub fn statePath(allocator: std.mem.Allocator) ![]const u8 {
     return std.fmt.allocPrint(allocator, "{s}/state.json", .{data});
 }
 
+pub fn makeDirAbsoluteRecursive(path: []const u8) !void {
+    std.fs.makeDirAbsolute(path) catch |err| switch (err) {
+        error.PathAlreadyExists => return,
+        error.FileNotFound => {
+            // Parent doesn't exist, create it first
+            if (std.fs.path.dirname(path)) |parent| {
+                try makeDirAbsoluteRecursive(parent);
+                try std.fs.makeDirAbsolute(path);
+            } else return err;
+        },
+        else => return err,
+    };
+}
+
 pub fn ensureDirs(allocator: std.mem.Allocator) !void {
     const data = try dataDir(allocator);
     defer allocator.free(data);
@@ -55,9 +69,6 @@ pub fn ensureDirs(allocator: std.mem.Allocator) !void {
 
     const dirs = [_][]const u8{ data, cache, bin };
     for (dirs) |dir| {
-        std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        try makeDirAbsoluteRecursive(dir);
     }
 }
