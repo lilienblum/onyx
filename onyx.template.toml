@@ -1,0 +1,74 @@
+# Onyx package format
+#
+# This file is a template — it is not used by onyx.
+#
+# Packages can be installed from three sources:
+#   onyx install hello              Nix binary cache (default)
+#   onyx install user:repo          GitHub repository
+#   onyx install tako.sh            Domain with meta tag resolution
+#
+# For GitHub and domain packages, onyx looks for this file
+# at the root of the repository as onyx.toml.
+
+# --- Package info ---
+
+[package]
+name = "my-tool"
+description = "A short description of the tool"
+license = "MIT"
+homepage = "https://github.com/user/my-tool"
+
+# --- Binary releases ---
+# Section format: ["version".platform]
+# Platforms: linux-x64, linux-arm64, macos
+
+["1.0.0".linux-x64]
+url = "https://github.com/user/my-tool/releases/download/v1.0.0/my-tool-linux-x64.tar.gz"
+sha256 = "abc123..."
+bin = ["my-tool"]
+
+["1.0.0".linux-arm64]
+url = "https://github.com/user/my-tool/releases/download/v1.0.0/my-tool-linux-arm64.tar.gz"
+sha256 = "def456..."
+bin = ["my-tool"]
+
+["1.0.0".macos]
+url = "https://github.com/user/my-tool/releases/download/v1.0.0/my-tool-macos.tar.gz"
+sha256 = "fedcba..."
+bin = ["my-tool"]
+
+# --- Dependencies ---
+# Packages required to run. Same format as onyx install.
+deps = ["nodejs@>=20", "ruby@3"]
+
+# --- Aliases ---
+# Alternative names for this package.
+aliases = ["mytool", "mt"]
+
+# --- Cleanup ---
+# Paths created at runtime that onyx can remove on uninstall.
+
+[cleanup]
+paths = [
+  "~/.config/my-tool",
+  "~/.my-tool-history",
+]
+
+[cleanup.macos]
+paths = [
+  "~/Library/Application Support/my-tool",
+  "~/Library/Caches/com.user.my-tool",
+  "~/Library/Preferences/com.user.my-tool.plist",
+]
+
+[cleanup.linux]
+paths = [
+  "~/.local/share/my-tool",
+  "~/.cache/my-tool",
+]
+
+# --- Hints ---
+# Optional message shown after install.
+
+[hints]
+post_install = "Run 'my-tool init' to get started"

@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Build
+        run: zig build
+      - name: Unit tests
+        run: zig build test
+
+  e2e:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Build
+        run: zig build -Doptimize=ReleaseSmall
+
+      - name: Setup nix store (Linux)
+        if: runner.os == 'Linux'
+        run: sudo mkdir -p /nix/store && sudo chown $(whoami) /nix/store
+
+      - name: Setup nix store (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # GitHub macOS runners already have /nix from the Nix installer,
+          # but we need it writable
+          if [ -d /nix/store ]; then
+            sudo chown -R $(whoami) /nix/store
+          else
+            sudo mkdir -p /nix/store && sudo chown $(whoami) /nix/store
+          fi
+
+      - name: Add to PATH
+        run: |
+          mkdir -p ~/.local/bin
+          cp zig-out/bin/onyx ~/.local/bin/onyx
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: "e2e: install"
+        run: |
+          onyx install hello
+          hello --version
+          onyx list | grep hello
+
+      - name: "e2e: install with version"
+        run: |
+          onyx install jq@1.7
+          jq --version
+
+      - name: "e2e: exec"
+        run: |
+          onyx exec cowsay -- "moo"
+
+      - name: "e2e: exec does not appear in list"
+        run: |
+          ! onyx list | grep cowsay
+
+      - name: "e2e: uninstall"
+        run: |
+          onyx uninstall hello
+          ! command -v hello
+          ! onyx list | grep hello
+
+      - name: "e2e: gc"
+        run: onyx gc
+
+      - name: "e2e: implode"
+        run: onyx implode --exec
+
+  release-please:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    needs: [test, e2e]
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux-musl
+            name: onyx-x86_64-linux
+          - target: aarch64-linux-musl
+            name: onyx-aarch64-linux
+          - target: aarch64-macos
+            name: onyx-aarch64-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Build
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSmall
+      - name: Package
+        run: |
+          cp zig-out/bin/onyx ${{ matrix.name }}
+          tar czf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: ${{ matrix.name }}.tar.gz
