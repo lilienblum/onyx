@@ -944,9 +944,12 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
         }
 
         // --exec: do it automatically
+        // Resolve username before entering sudo, where $(whoami) would be root
+        const user = std.posix.getenv("USER") orelse "root";
+
         if (is_macos) {
             ui.print("creating /nix volume...\n", .{});
-            const script =
+            const script = try std.fmt.allocPrint(allocator,
                 \\set -e
                 \\grep -q '^nix$' /etc/synthetic.conf 2>/dev/null || echo 'nix' >> /etc/synthetic.conf
                 \\/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -t || true
@@ -954,9 +957,10 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
                 \\  diskutil apfs addVolume disk3 APFS nix -mountpoint /nix
                 \\  echo 'LABEL=nix /nix apfs rw' >> /etc/fstab
                 \\fi
-                \\chown $(whoami) /nix
+                \\chown {s} /nix
                 \\mkdir -p /nix/store
-            ;
+            , .{user});
+            defer allocator.free(script);
             var child = std.process.Child.init(
                 &.{ "sudo", "sh", "-c", script },
                 allocator,
@@ -979,8 +983,11 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
             }
         } else {
             ui.print("creating /nix/store...\n", .{});
+            const cmd = try std.fmt.allocPrint(allocator,
+                "mkdir -p /nix/store && chown {s} /nix/store", .{user});
+            defer allocator.free(cmd);
             var child = std.process.Child.init(
-                &.{ "sudo", "sh", "-c", "mkdir -p /nix/store && chown $(whoami) /nix/store" },
+                &.{ "sudo", "sh", "-c", cmd },
                 allocator,
             );
             const term = child.spawnAndWait() catch {
