@@ -35,26 +35,14 @@ jobs:
       - name: Build
         run: zig build -Doptimize=ReleaseSmall
 
-      - name: Setup nix store (Linux)
-        if: runner.os == 'Linux'
-        run: sudo mkdir -p /nix/store && sudo chown $(whoami) /nix/store
-
-      - name: Setup nix store (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          # GitHub macOS runners already have /nix from the Nix installer,
-          # but we need it writable
-          if [ -d /nix/store ]; then
-            sudo chown -R $(whoami) /nix/store
-          else
-            sudo mkdir -p /nix/store && sudo chown $(whoami) /nix/store
-          fi
-
       - name: Add to PATH
         run: |
           mkdir -p ~/.local/bin
           cp zig-out/bin/onyx ~/.local/bin/onyx
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Setup nix store
+        run: onyx init --exec
 
       - name: "e2e: install"
         run: |
