@@ -957,8 +957,8 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
                 \\  diskutil apfs addVolume disk3 APFS nix -mountpoint /nix
                 \\  echo 'LABEL=nix /nix apfs rw' >> /etc/fstab
                 \\fi
-                \\chown {s} /nix
                 \\mkdir -p /nix/store
+                \\chown -R {s} /nix
             , .{user});
             defer allocator.free(script);
             var child = std.process.Child.init(
