@@ -32,7 +32,7 @@ Onyx is a package manager with two install paths: **registry packages** (resolve
 
 **Nix path**: `resolveAlias` (registry index) → `resolve` (Nixhub API) → `fetchClosure` (cache.nixos.org, parallel NARs) → unpack to `/nix/store/` → symlink to `~/.local/bin/`
 
-**Third-party path**: `resolveGithub`/`resolveDomain` → download binary/tarball → install to `~/.local/share/onyx/packages/{name}/{version}/` → symlink to `~/.local/bin/`
+**Third-party path**: `resolveGithub`/`resolveDomain` → download binary/tarball → install to `/opt/onyx/packages/{name}/{version}/` → symlink to `~/.local/bin/`
 
 Both paths store state in `~/.local/share/onyx/state.json` and create symlinks in `~/.local/bin/`.
 
@@ -44,6 +44,6 @@ Both paths store state in `~/.local/share/onyx/state.json` and create symlinks i
 - **Symlink ownership**: `removeSymlinks` uses `readLink` to verify the symlink points to `/nix/store/` or `/onyx/packages/` before deleting — never removes files owned by other tools.
 - **exec fast path**: `cmdExec` checks state.json first. If the package is already installed, it skips all network calls and directly `execv`s into the binary.
 
-### Registry
+### Aliases
 
-The registry lives on the `registry/v0` branch. `index.json` maps aliases (e.g., `nodejs` → nixpkgs attribute). Per-package `.toml` files contain cleanup metadata (paths to delete on uninstall, extracted from Homebrew).
+`aliases.json` in the repo root maps friendly names to nixpkgs attributes (e.g., `node` → `nodejs`). Fetched and cached at `~/.cache/onyx/aliases.json`.

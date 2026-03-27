@@ -1,6 +1,6 @@
 # Onyx
 
-Onyx is a package manager that combines a curated registry with the Nix binary cache. The registry provides name resolution and cleanup metadata; the Nix cache provides 80,000+ prebuilt packages. Third-party packages skip Nix entirely — they publish an onyx.toml with download URLs and install directly to `~/.local/bin`.
+Onyx is a package manager that combines a curated registry with the Nix binary cache. The registry provides name resolution and aliases; the Nix cache provides 80,000+ prebuilt packages. Third-party packages skip Nix entirely — they publish an onyx.toml with download URLs and install directly to `~/.local/bin`.
 
 
 ```bash
@@ -23,12 +23,10 @@ onyx x ruby -- script.rb
 | Cross-platform | Linux + macOS | macOS-first | Linux + macOS | Linux only |
 | Binary size | <1MB | 12MB+ Ruby runtime | 30MB+ | System package |
 | Deterministic | Yes (content-addressed) | No | Yes | No |
-| Cleanup metadata | Yes (from Homebrew) | Yes | No | `dpkg --purge` |
 
 Onyx takes the best of each world:
 - **Nix's binary cache** — 80k+ packages, content-addressed, reproducible
-- **Homebrew's cleanup metadata** — knows where apps scatter files
-- **None of their complexity** — no Ruby, no Nix language, no learning curve
+- **None of the complexity** — no Ruby, no Nix language, no learning curve
 
 ## Quickstart
 
@@ -74,7 +72,7 @@ onyx upgrade              # upgrade all packages + onyx itself
 onyx gc                   # clean up unused store paths + expired exec packages
 ```
 
-Third-party packages (`user:repo`, `domain.com`) skip the nix store entirely and install directly to `~/.local/bin`.
+Third-party packages (`user:repo`, `domain.com`) skip the nix store entirely and install to `/opt/onyx/packages/`, symlinked into `~/.local/bin`.
 
 ## How it works
 
@@ -119,11 +117,11 @@ Aliases: `i` install, `rm` uninstall, `x` exec, `ls` list.
 
 ```
 ~/.local/bin/node     →  /nix/store/abc123-nodejs-22.0.0/bin/node
-~/.local/bin/my-tool  →  ~/.local/share/onyx/packages/my-tool/1.0.0/bin/my-tool
+~/.local/bin/my-tool  →  /opt/onyx/packages/my-tool/1.0.0/bin/my-tool
 
 /nix/store/abc123-nodejs-22.0.0/           nix packages + closures
 /nix/store/def456-glibc-2.39/
-~/.local/share/onyx/packages/my-tool/      third-party packages
+/opt/onyx/packages/my-tool/                third-party packages
 
 ~/.local/share/onyx/state.json             package state
 ~/.cache/onyx/index.json                   registry index
@@ -153,28 +151,9 @@ Domain-based discovery via HTML meta tag:
 <meta name="onyx" content="git https://github.com/user/repo">
 ```
 
-## Registry
+## Aliases
 
-The registry provides two things:
-
-1. **Aliases** — maps friendly names like `nodejs` to nixpkgs attributes
-2. **Cleanup metadata** — extracted from Homebrew, tells onyx what files to remove on uninstall
-
-```toml
-# registry/firefox.toml
-[cleanup.macos]
-paths = [
-  "~/Library/Application Support/Firefox",
-  "~/Library/Caches/org.mozilla.firefox",
-  "~/Library/Preferences/org.mozilla.firefox.plist",
-]
-
-[cleanup.linux]
-paths = [
-  "~/.mozilla/firefox",
-  "~/.cache/mozilla/firefox",
-]
-```
+[`aliases.json`](aliases.json) maps short names to nixpkgs attributes (e.g., `node` → `nodejs`, `pg` → `postgresql`). Cached locally, refreshed daily.
 
 ## Building
 

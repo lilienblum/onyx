@@ -1,0 +1,7 @@
+{
+  "node": "nodejs",
+  "node.js": "nodejs",
+  "postgres": "postgresql",
+  "psql": "postgresql",
+  "pg": "postgresql"
+}

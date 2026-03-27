@@ -75,6 +75,44 @@ jobs:
       - name: "e2e: implode"
         run: onyx implode --exec
 
+  validate-aliases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache nixpkgs package list
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/nixpkgs-names.txt
+          key: nixpkgs-names-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: nixpkgs-names-
+
+      - name: Download nixpkgs package list
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y brotli
+          curl -sL "https://channels.nixos.org/nixos-unstable/packages.json.br" \
+            | brotli -d \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(d['packages'].keys()))" \
+            > /tmp/nixpkgs-names.txt
+          echo "$(wc -l < /tmp/nixpkgs-names.txt) packages indexed"
+
+      - name: Check aliases don't shadow nixpkgs
+        run: |
+          conflicts=0
+          for alias in $(python3 -c "import json; [print(k) for k in json.load(open('aliases.json'))]"); do
+            if grep -qx "$alias" /tmp/nixpkgs-names.txt; then
+              echo "CONFLICT: alias \"$alias\" shadows nixpkgs package"
+              conflicts=$((conflicts + 1))
+            fi
+          done
+          if [ $conflicts -gt 0 ]; then
+            echo "$conflicts alias(es) shadow real nixpkgs packages"
+            exit 1
+          fi
+          echo "all aliases ok"
+
   release-please:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
