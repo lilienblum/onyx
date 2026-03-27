@@ -1,25 +1,53 @@
 {
-  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "simple",
-  "bump-minor-pre-major": true,
-  "bump-major-pre-major": true,
-  "include-v-in-tag": true,
-  "changelog-sections": [
-    { "type": "feat", "section": "Features" },
-    { "type": "fix", "section": "Bug Fixes" },
-    { "type": "perf", "section": "Performance" },
-    { "type": "chore", "section": "Misc", "hidden": true },
-    { "type": "docs", "section": "Docs", "hidden": true },
-    { "type": "refactor", "section": "Refactoring", "hidden": true },
-    { "type": "test", "section": "Tests", "hidden": true },
-    { "type": "ci", "section": "CI", "hidden": true }
-  ],
-  "packages": {
-    ".": {
-      "component": "onyx",
-      "extra-files": [
-        "src/main.zig"
-      ]
-    }
-  }
+	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+	"release-type": "simple",
+	"bump-minor-pre-major": true,
+	"include-v-in-tag": true,
+	"changelog-sections": [
+		{
+			"type": "feat",
+			"section": "Features"
+		},
+		{
+			"type": "fix",
+			"section": "Bug Fixes"
+		},
+		{
+			"type": "perf",
+			"section": "Performance"
+		},
+		{
+			"type": "chore",
+			"section": "Misc",
+			"hidden": true
+		},
+		{
+			"type": "docs",
+			"section": "Docs",
+			"hidden": true
+		},
+		{
+			"type": "refactor",
+			"section": "Refactoring",
+			"hidden": true
+		},
+		{
+			"type": "test",
+			"section": "Tests",
+			"hidden": true
+		},
+		{
+			"type": "ci",
+			"section": "CI",
+			"hidden": true
+		}
+	],
+	"packages": {
+		".": {
+			"component": "onyx",
+			"extra-files": [
+				"src/main.zig"
+			]
+		}
+	}
 }
