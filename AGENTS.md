@@ -14,13 +14,13 @@ Zig 0.15+ required. This is Zig 0.15 which uses newer APIs (`std.Io.Writer.Alloc
 
 ## Architecture
 
-Onyx is a package manager with two install paths: **registry packages** (resolved via Onyx registry, fetched from the Nix binary cache) and **third-party packages** (GitHub/domain sources with `onyx.toml` manifests, installed directly).
+Onyx is a package manager with two install paths: **Nix packages** (resolved via aliases + Nixhub API, fetched from the Nix binary cache) and **third-party packages** (GitHub/domain sources with `onyx.toml` manifests, installed directly).
 
 ### Source files
 
 - **main.zig** — CLI entry point, all command implementations (`cmdInstall`, `cmdExec`, `cmdUninstall`, `cmdUse`, `cmdGc`, `cmdUpgrade`, `cmdInit`, `cmdImplode`)
 - **cli.zig** — argument parsing, `PackageRef` (name@version), `Command` union
-- **resolver.zig** — registry alias resolution, Nixhub API calls, index caching with TTL
+- **resolver.zig** — alias resolution, Nixhub API calls, index caching with TTL
 - **fetcher.zig** — NAR closure fetching, parallel download (thread pool), hash verification
 - **source.zig** — third-party package resolution (GitHub, domain), TOML manifest parsing, meta tag discovery
 - **store.zig** — `Database` struct: state.json load/save, version management, symlink install/remove
@@ -30,7 +30,7 @@ Onyx is a package manager with two install paths: **registry packages** (resolve
 
 ### Two install paths
 
-**Nix path**: `resolveAlias` (registry index) → `resolve` (Nixhub API) → `fetchClosure` (cache.nixos.org, parallel NARs) → unpack to `/nix/store/` → symlink to `~/.local/bin/`
+**Nix path**: `resolveAlias` (aliases.json) → `resolve` (Nixhub API) → `fetchClosure` (cache.nixos.org, parallel NARs) → unpack to `/nix/store/` → symlink to `~/.local/bin/`
 
 **Third-party path**: `resolveGithub`/`resolveDomain` → download binary/tarball → install to `/opt/onyx/packages/{name}/{version}/` → symlink to `~/.local/bin/`
 
@@ -39,7 +39,7 @@ Both paths store state in `~/.local/share/onyx/state.json` and create symlinks i
 ### Key patterns
 
 - **Locking**: `acquireLock`/`releaseLock` via file lock on `~/.local/share/onyx/lock`. Commands that mutate state (`install`, `uninstall`, `use`, `gc`, `upgrade`) must hold the lock. `cmdInstall` wraps `cmdInstallInner` to avoid recursive lock acquisition when installing dependencies.
-- **Alias resolution**: `resolveAlias` checks `~/.cache/onyx/index.json`. Fast commands (`exec`, `use`, `list`) use cached index forever. Slow commands (`install`, `upgrade`) refresh if >1 day old via `resolveAliasFresh`.
+- **Alias resolution**: `resolveAlias` checks `~/.cache/onyx/aliases.json`. Fast commands (`exec`, `use`, `list`) use cached aliases forever. Slow commands (`install`, `upgrade`) refresh if >1 day old via `resolveAliasFresh`.
 - **Ephemeral packages**: `exec` auto-installs packages marked `ephemeral: true` with `last_used` timestamp. These are hidden from `list` and cleaned by `gc` after 30 days.
 - **Symlink ownership**: `removeSymlinks` uses `readLink` to verify the symlink points to `/nix/store/` or `/onyx/packages/` before deleting — never removes files owned by other tools.
 - **exec fast path**: `cmdExec` checks state.json first. If the package is already installed, it skips all network calls and directly `execv`s into the binary.

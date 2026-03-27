@@ -1,6 +1,6 @@
 # Onyx
 
-Onyx is a package manager that combines a curated registry with the Nix binary cache. The registry provides name resolution and aliases; the Nix cache provides 80,000+ prebuilt packages. Third-party packages skip Nix entirely — they publish an onyx.toml with download URLs and install directly to `~/.local/bin`.
+Onyx is a package manager backed by the Nix binary cache — 80,000+ prebuilt packages, installed in seconds. Third-party packages skip Nix entirely — they publish an onyx.toml with download URLs and install directly to `~/.local/bin`.
 
 
 ```bash
@@ -15,18 +15,15 @@ onyx x ruby -- script.rb
 
 ## Why
 
-| | Onyx | Homebrew | Nix | apt |
-|---|---|---|---|---|
-| Install speed | Seconds (prebuilt) | Minutes (often builds) | Seconds | Seconds |
-| Packages | 80,000+ | ~7,000 | 80,000+ | Distro-dependent |
-| Multi-version | `onyx use node@20` | No | Manual | No |
-| Cross-platform | Linux + macOS | macOS-first | Linux + macOS | Linux only |
-| Binary size | <1MB | 12MB+ Ruby runtime | 30MB+ | System package |
-| Deterministic | Yes (content-addressed) | No | Yes | No |
+Nix has the best package infrastructure ever built — 80,000+ prebuilt packages in a content-addressed binary cache.
 
-Onyx takes the best of each world:
-- **Nix's binary cache** — 80k+ packages, content-addressed, reproducible
-- **None of the complexity** — no Ruby, no Nix language, no learning curve
+Onyx gives you the cache without the overhead. One static binary under 1 MB, no configuration, no new language to learn.
+
+- **Version pinning** — `onyx install node@20` and `node@22` live side by side, each install is atomic
+- **Version switching** — `onyx use node@20` flips the active version instantly
+- **Run without installing** — `onyx x jq -- '.name' package.json` fetches and runs, `onyx gc` cleans up after 30 days
+- **Cross-platform** — same tool, same packages on Linux and macOS
+- **Extensible** — third-party packages via simple TOML manifests, no Nix expressions needed
 
 ## Quickstart
 
@@ -78,22 +75,14 @@ Third-party packages (`user:repo`, `domain.com`) skip the nix store entirely and
 
 ```mermaid
 flowchart LR
-    A[onyx install nodejs@22] --> B
-
-    subgraph B[Registry]
-        direction TB
-        B1[Resolve alias] --> B2{Onyx package?}
-    end
-
-    B2 -->|yes| D[Install to ~/.local/share/onyx/]
-    B2 -->|no| C[Nixhub API]
-    C --> E[cache.nixos.org]
-    E --> F[Install to /nix/store/]
-    D -->|symlink| G[~/.local/bin/]
-    F -->|symlink| G
+    A[onyx install nodejs@22] --> B[Resolve alias]
+    B --> C[Nixhub API]
+    C --> D[cache.nixos.org]
+    D --> E[Install to /nix/store/]
+    E -->|symlink| F[~/.local/bin/]
 ```
 
-The [Onyx registry](https://github.com/lilienblum/onyx/tree/registry/v0) is checked first. If it has a direct package definition, the binary is downloaded and installed. Otherwise, the name is resolved through the Nix path — Nixhub API, dependency closure from `cache.nixos.org`, parallel download, unpack, and symlink into `~/.local/bin/`.
+Aliases (`node` → `nodejs`) are resolved first, then the Nixhub API finds the package, its dependency closure is fetched in parallel from `cache.nixos.org`, unpacked to `/nix/store/`, and symlinked into `~/.local/bin/`.
 
 Third-party packages (`user:repo`, `domain.com`) fetch an `onyx.toml` manifest, download the binary for your platform, verify SHA256, and install directly — no nix store involved.
 
@@ -124,7 +113,7 @@ Aliases: `i` install, `rm` uninstall, `x` exec, `ls` list.
 /opt/onyx/packages/my-tool/                third-party packages
 
 ~/.local/share/onyx/state.json             package state
-~/.cache/onyx/index.json                   registry index
+~/.cache/onyx/aliases.json                 alias cache
 ```
 
 ## Third-party packages
