@@ -41,32 +41,6 @@ bin = ["my-tool"]
 # Packages required to run. Same format as onyx install.
 deps = ["nodejs@>=20", "ruby@3"]
 
-# --- Aliases ---
-# Alternative names for this package.
-aliases = ["mytool", "mt"]
-
-# --- Cleanup ---
-# Paths created at runtime that onyx can remove on uninstall.
-
-[cleanup]
-paths = [
-  "~/.config/my-tool",
-  "~/.my-tool-history",
-]
-
-[cleanup.macos]
-paths = [
-  "~/Library/Application Support/my-tool",
-  "~/Library/Caches/com.user.my-tool",
-  "~/Library/Preferences/com.user.my-tool.plist",
-]
-
-[cleanup.linux]
-paths = [
-  "~/.local/share/my-tool",
-  "~/.cache/my-tool",
-]
-
 # --- Hints ---
 # Optional message shown after install.
 

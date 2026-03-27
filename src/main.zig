@@ -1075,8 +1075,6 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
     if (std.fs.createFileAbsolute(test_path, .{})) |f| {
         f.close();
         std.fs.deleteFileAbsolute(test_path) catch {};
-        ui.print("already initialized\n", .{});
-        checkPath(allocator);
     } else |_| {
         if (exec) {
             ui.print("fixing /nix/store permissions...\n", .{});
@@ -1101,6 +1099,45 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
         } else {
             ui.err("/nix/store exists but is not writable", .{});
             ui.print("sudo chown $(whoami) /nix/store\n", .{});
+            return;
+        }
+    }
+
+    // Ensure /opt/onyx exists
+    ensureOptOnyx(allocator, exec);
+
+    checkPath(allocator);
+}
+
+fn ensureOptOnyx(allocator: std.mem.Allocator, exec: bool) void {
+    std.fs.accessAbsolute("/opt/onyx", .{}) catch {
+        if (!exec) {
+            ui.print("sudo mkdir -p /opt/onyx && sudo chown $(whoami) /opt/onyx\n", .{});
+            return;
+        }
+        const user = std.posix.getenv("USER") orelse "root";
+        const cmd = std.fmt.allocPrint(allocator, "mkdir -p /opt/onyx && chown {s} /opt/onyx", .{user}) catch return;
+        defer allocator.free(cmd);
+        var child = std.process.Child.init(&.{ "sudo", "sh", "-c", cmd }, allocator);
+        _ = child.spawnAndWait() catch {};
+        return;
+    };
+
+    // Check writable
+    const test_path = "/opt/onyx/.onyx-write-test";
+    if (std.fs.createFileAbsolute(test_path, .{})) |f| {
+        f.close();
+        std.fs.deleteFileAbsolute(test_path) catch {};
+    } else |_| {
+        if (exec) {
+            const user = std.posix.getenv("USER") orelse "root";
+            const cmd = std.fmt.allocPrint(allocator, "chown {s} /opt/onyx", .{user}) catch return;
+            defer allocator.free(cmd);
+            var child = std.process.Child.init(&.{ "sudo", "sh", "-c", cmd }, allocator);
+            _ = child.spawnAndWait() catch {};
+        } else {
+            ui.err("/opt/onyx exists but is not writable", .{});
+            ui.print("sudo chown $(whoami) /opt/onyx\n", .{});
         }
     }
 }

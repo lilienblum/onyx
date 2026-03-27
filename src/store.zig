@@ -17,6 +17,7 @@ pub const Database = struct {
         bins: []const []const u8,
         closure: []const []const u8,
         active: bool,
+        pin: ?[]const u8 = null,
         ephemeral: bool = false,
         last_used: i64 = 0,
     };
@@ -106,6 +107,10 @@ pub const Database = struct {
                     .bool => |b| b,
                     else => false,
                 } else false;
+                const pin: ?[]const u8 = if (ver_obj.get("pin")) |a| switch (a) {
+                    .string => |s| s,
+                    else => null,
+                } else null;
                 const last_used: i64 = if (ver_obj.get("last_used")) |a| switch (a) {
                     .integer => |n| n,
                     else => 0,
@@ -141,6 +146,7 @@ pub const Database = struct {
                     .bins = try bins.toOwnedSlice(aa),
                     .closure = try closure_list.toOwnedSlice(aa),
                     .active = active,
+                    .pin = pin,
                     .ephemeral = ephemeral,
                     .last_used = last_used,
                 });
@@ -185,6 +191,10 @@ pub const Database = struct {
                 try w.write(ver.store_path);
                 try w.objectField("active");
                 try w.write(ver.active);
+                if (ver.pin) |pin| {
+                    try w.objectField("pin");
+                    try w.write(pin);
+                }
                 if (ver.ephemeral) {
                     try w.objectField("ephemeral");
                     try w.write(true);
@@ -221,7 +231,7 @@ pub const Database = struct {
         try file.writeAll(json_str);
     }
 
-    pub fn addVersion(self: *Database, name: []const u8, version: []const u8, store_path: []const u8, bins: []const []const u8, closure: []const []const u8, opts: struct { ephemeral: bool = false }) !void {
+    pub fn addVersion(self: *Database, name: []const u8, version: []const u8, store_path: []const u8, bins: []const []const u8, closure: []const []const u8, opts: struct { pin: ?[]const u8 = null, ephemeral: bool = false }) !void {
         const aa = self._arena.allocator();
         const name_d = try aa.dupe(u8, name);
         const version_d = try aa.dupe(u8, version);
@@ -244,12 +254,15 @@ pub const Database = struct {
 
         const now: i64 = @intCast(@divTrunc(std.time.nanoTimestamp(), std.time.ns_per_s));
 
+        const pin_d = if (opts.pin) |p| try aa.dupe(u8, p) else null;
+
         // Check if version already exists
         for (gop.value_ptr.versions.items) |*ver| {
             if (std.mem.eql(u8, ver.version, version_d)) {
                 ver.store_path = store_path_d;
                 ver.bins = bins_d;
                 ver.closure = closure_d;
+                ver.pin = pin_d;
                 if (opts.ephemeral) ver.last_used = now;
                 return;
             }
@@ -264,6 +277,7 @@ pub const Database = struct {
             .bins = bins_d,
             .closure = closure_d,
             .active = is_active,
+            .pin = pin_d,
             .ephemeral = opts.ephemeral,
             .last_used = if (opts.ephemeral) now else 0,
         });
