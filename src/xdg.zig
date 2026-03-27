@@ -31,10 +31,10 @@ pub fn binDir(allocator: std.mem.Allocator) ![]const u8 {
     return std.fmt.allocPrint(allocator, "{s}/.local/bin", .{home});
 }
 
+pub const pkg_store_dir = "/opt/onyx/packages";
+
 pub fn pkgDir(allocator: std.mem.Allocator) ![]const u8 {
-    const data = try dataDir(allocator);
-    defer allocator.free(data);
-    return std.fmt.allocPrint(allocator, "{s}/packages", .{data});
+    return allocator.dupe(u8, pkg_store_dir);
 }
 
 pub fn statePath(allocator: std.mem.Allocator) ![]const u8 {
