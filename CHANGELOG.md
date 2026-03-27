@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0](https://github.com/lilienblum/onyx/compare/onyx-v0.1.0...onyx-v0.2.0) (2026-03-27)
+
+
+### Features
+
+* add info command with platform-aware routing ([91a7fc6](https://github.com/lilienblum/onyx/commit/91a7fc63cd55db932b2804c0f2fff74633ccebff))
+* move third-party packages to /opt/onyx ([1245217](https://github.com/lilienblum/onyx/commit/1245217b35fa2b871a4c53c86eee322a502f2d9b))
+* version pinning and /opt/onyx init fix ([5364333](https://github.com/lilienblum/onyx/commit/53643336f961c08819f8245a8db1485a3534f327))
+
 ## 0.1.0 (2026-03-26)
 
 
