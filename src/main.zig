@@ -13,9 +13,7 @@ const SourceType = enum { nix, github, domain };
 
 fn detectSource(ref: cli.PackageRef) SourceType {
     const name = ref.source orelse ref.name;
-    // Has : → GitHub shorthand (user:repo)
     if (std.mem.indexOfScalar(u8, name, ':') != null) return .github;
-    // Has . → domain (tako.sh)
     if (std.mem.indexOfScalar(u8, name, '.') != null) return .domain;
     return .nix;
 }
@@ -53,8 +51,21 @@ pub fn main() !void {
             switch (e) {
                 error.HttpError => ui.err("package not found: {s}", .{ref.name}),
                 error.PackageNotFound => ui.err("package not found: {s}", .{ref.name}),
+                error.NoPlatformBuild => {
+                    cmdInfo(allocator, ref) catch {
+                        ui.err("not available on this platform: {s}", .{ref.name});
+                    };
+                },
                 error.NoBinaryForPlatform => ui.err("no binary available for {s} on {s}", .{ ref.name, source.platform }),
                 error.NoVersionFound => ui.err("version not found: {s}", .{if (ref.version) |v| v else "latest"}),
+                else => ui.err("{}", .{e}),
+            }
+            std.process.exit(1);
+        },
+        .info => |ref| cmdInfo(allocator, ref) catch |e| {
+            switch (e) {
+                error.HttpError => ui.err("package not found: {s}", .{ref.name}),
+                error.PackageNotFound => ui.err("package not found: {s}", .{ref.name}),
                 else => ui.err("{}", .{e}),
             }
             std.process.exit(1);
@@ -65,6 +76,11 @@ pub fn main() !void {
             switch (e) {
                 error.HttpError => ui.err("package not found: {s}", .{ea.package.name}),
                 error.PackageNotFound => ui.err("package not found: {s}", .{ea.package.name}),
+                error.NoPlatformBuild => {
+                    cmdInfo(allocator, ea.package) catch {
+                        ui.err("not available on this platform: {s}", .{ea.package.name});
+                    };
+                },
                 else => ui.err("{}", .{e}),
             }
             std.process.exit(1);
@@ -115,7 +131,14 @@ fn cmdInstallInner(allocator: std.mem.Allocator, ref: cli.PackageRef) anyerror!v
     const src_type = detectSource(ref);
 
     switch (src_type) {
-        .github, .domain => return installThirdParty(allocator, ref, src_type),
+        .github => return installThirdParty(allocator, ref, src_type),
+        .domain => {
+            // Try domain; if DNS fails, fall back to nix (e.g. "node.js")
+            return installThirdParty(allocator, ref, src_type) catch |e| switch (e) {
+                error.UnknownHostName => {},
+                else => return e,
+            };
+        },
         .nix => {},
     }
 
@@ -161,7 +184,7 @@ fn cmdInstallInner(allocator: std.mem.Allocator, ref: cli.PackageRef) anyerror!v
         allocator.free(bins);
     }
 
-    try db.addVersion(resolved.name, resolved.version, resolved.store_path, bins, closure, .{});
+    try db.addVersion(resolved.name, resolved.version, resolved.store_path, bins, closure, .{ .pin = ref.version });
 
     // If this was previously ephemeral, clear the flag (explicit install = permanent)
     if (db.getActiveVersion(resolved.name)) |ver| {
@@ -369,7 +392,7 @@ fn installThirdParty(allocator: std.mem.Allocator, ref: cli.PackageRef, src_type
     var db = try store.Database.load(allocator, state_path);
     defer db.deinit();
 
-    try db.addVersion(pkg.name, pkg.version, pkg_path, pkg.bins, &.{}, .{});
+    try db.addVersion(pkg.name, pkg.version, pkg_path, pkg.bins, &.{}, .{ .pin = ref.version });
     try db.installSymlinks(allocator, pkg.name);
     try db.save(state_path);
 
@@ -416,7 +439,6 @@ fn cmdUninstall(allocator: std.mem.Allocator, ref: cli.PackageRef) !void {
         try db.removeSymlinks(allocator, pkg_name);
         if (db.removePackage(pkg_name)) {
             try db.save(state_path);
-            cleanupPaths(allocator, pkg_name);
             cleanupPkgStore(allocator, pkg_name);
             ui.print("removed {s}@{s}\n", .{ pkg_name, ver_str });
             if (bins.len > 0) {
@@ -429,69 +451,6 @@ fn cmdUninstall(allocator: std.mem.Allocator, ref: cli.PackageRef) !void {
             }
         } else {
             ui.print("{s} is not installed\n", .{ref.name});
-        }
-    }
-}
-
-/// Fetch cleanup paths from registry and delete them.
-fn cleanupPaths(allocator: std.mem.Allocator, name: []const u8) void {
-    const toml_url = resolver.registryUrl(allocator, name) catch return;
-    defer allocator.free(toml_url);
-
-    const full_url = std.fmt.allocPrint(allocator, "{s}.toml", .{toml_url}) catch return;
-    defer allocator.free(full_url);
-
-    var client: std.http.Client = .{ .allocator = allocator };
-    defer client.deinit();
-
-    const body = resolver.httpGet(allocator, &client, full_url) catch return;
-    defer allocator.free(body);
-
-    const home = std.posix.getenv("HOME") orelse return;
-
-    // Determine which cleanup sections to use
-    const os_section = if (comptime builtin.os.tag == .macos) "cleanup.macos" else "cleanup.linux";
-    const sections = [_][]const u8{ "cleanup", os_section };
-
-    for (sections) |target_section| {
-        var in_section = false;
-        var in_paths = false;
-        var lines = std.mem.splitScalar(u8, body, '\n');
-        while (lines.next()) |line| {
-            const trimmed = std.mem.trim(u8, line, " \t\r");
-
-            if (trimmed.len > 0 and trimmed[0] == '[') {
-                const hdr = std.mem.trim(u8, trimmed, "[] \t");
-                in_section = std.mem.eql(u8, hdr, target_section);
-                in_paths = false;
-                continue;
-            }
-
-            if (!in_section) continue;
-
-            if (std.mem.startsWith(u8, trimmed, "paths")) {
-                in_paths = true;
-                continue;
-            }
-
-            if (in_paths and trimmed.len > 0 and trimmed[0] == ']') {
-                in_paths = false;
-                continue;
-            }
-
-            if (in_paths and trimmed.len > 2 and trimmed[0] == '"') {
-                const path_val = std.mem.trim(u8, trimmed, " \t\",");
-                if (path_val.len == 0) continue;
-
-                // Expand ~ (with safety checks)
-                if (std.mem.startsWith(u8, path_val, "~/")) {
-                    if (path_val.len <= 2) continue; // reject "~/" alone
-                    if (std.mem.indexOf(u8, path_val, "..") != null) continue;
-                    const full = std.fmt.allocPrint(allocator, "{s}/{s}", .{ home, path_val[2..] }) catch continue;
-                    defer allocator.free(full);
-                    std.fs.deleteTreeAbsolute(full) catch continue;
-                }
-            }
         }
     }
 }
@@ -528,6 +487,81 @@ fn cmdList(allocator: std.mem.Allocator) !void {
 
     if (count == 0) {
         ui.print("no packages installed\n", .{});
+    }
+}
+
+fn cmdInfo(allocator: std.mem.Allocator, ref: cli.PackageRef) !void {
+    const src_type = detectSource(ref);
+
+    switch (src_type) {
+        .github => return cmdInfoThirdParty(allocator, ref, src_type),
+        .domain => {
+            return cmdInfoThirdParty(allocator, ref, src_type) catch |e| switch (e) {
+                error.UnknownHostName => {},
+                else => return e,
+            };
+        },
+        .nix => {},
+    }
+
+    var pkg_info = try resolver.info(allocator, ref.name, ref.version);
+    defer pkg_info.deinit();
+
+    ui.pkg(pkg_info.name, pkg_info.version);
+
+    if (pkg_info.summary.len > 0) {
+        ui.print("{s}\n", .{pkg_info.summary});
+    }
+
+    // Show available platforms on one line
+    ui.printPlatforms(pkg_info.systems, resolver.system);
+
+    // Check if installed locally
+    try cmdInfoLocalStatus(allocator, ref.name, pkg_info.name, pkg_info.version);
+}
+
+fn cmdInfoThirdParty(allocator: std.mem.Allocator, ref: cli.PackageRef, src_type: SourceType) !void {
+    const name = ref.source orelse ref.name;
+
+    var manifest = switch (src_type) {
+        .github => try source.infoGithub(allocator, name, ref.version),
+        .domain => try source.infoDomain(allocator, name, ref.version),
+        .nix => unreachable,
+    };
+    defer manifest.deinit();
+
+    const latest = if (manifest.entries.len > 0) manifest.entries[0].version else "unknown";
+    ui.pkg(manifest.name, latest);
+
+    // Collect platforms for this version
+    var plats: [4]?[]const u8 = .{ null, null, null, null };
+    var pi: usize = 0;
+    for (manifest.entries) |entry| {
+        if (!std.mem.eql(u8, entry.version, latest)) continue;
+        if (pi < plats.len) {
+            plats[pi] = entry.platform;
+            pi += 1;
+        }
+    }
+    ui.printPlatformsRaw(plats, source.platform);
+
+    try cmdInfoLocalStatus(allocator, ref.name, manifest.name, latest);
+}
+
+fn cmdInfoLocalStatus(allocator: std.mem.Allocator, ref_name: []const u8, pkg_name: []const u8, latest: []const u8) !void {
+    const state_path = xdg.statePath(allocator) catch return;
+    defer allocator.free(state_path);
+
+    var db = store.Database.load(allocator, state_path) catch return;
+    defer db.deinit();
+
+    const local_name = if (db.packages.contains(pkg_name)) pkg_name else ref_name;
+    if (db.getActiveVersion(local_name)) |ver| {
+        if (std.mem.eql(u8, ver.version, latest)) {
+            ui.ok("Installed", .{});
+        } else {
+            ui.ok("Installed: {s}", .{ver.version});
+        }
     }
 }
 
@@ -808,43 +842,66 @@ fn cmdUpgrade(allocator: std.mem.Allocator, ua: cli.UpgradeArgs) !void {
             if (!std.mem.eql(u8, name, target)) continue;
         }
 
-        var resolved = resolver.resolve(allocator, name, null) catch |e| {
-            ui.warn("could not resolve {s}: {}", .{ name, e });
-            continue;
-        };
-        defer resolved.deinit();
+        for (entry.value_ptr.versions.items) |*ver| {
+            // Skip ephemeral packages
+            if (ver.ephemeral) continue;
 
-        const active = db.getActiveVersion(name);
-        if (active) |ver| {
+            var resolved = resolver.resolve(allocator, name, ver.pin) catch |e| {
+                ui.warn("could not resolve {s}: {}", .{ name, e });
+                continue;
+            };
+            defer resolved.deinit();
+
             if (std.mem.eql(u8, ver.store_path, resolved.store_path)) {
-                ui.print("{s}@{s} up to date\n", .{ name, ver.version });
+                const pin_str = ver.pin orelse "latest";
+                ui.print("{s}@{s} up to date ({s})\n", .{ name, ver.version, pin_str });
                 continue;
             }
+
+            ui.status("upgrading {s}@{s} to {s}...", .{ name, ver.version, resolved.version });
+
+            const closure = fetcher.fetchClosure(allocator, resolved.store_path) catch |e| {
+                ui.warn("failed to fetch {s}: {}", .{ name, e });
+                continue;
+            };
+            defer {
+                for (closure) |cp| allocator.free(cp);
+                allocator.free(closure);
+            }
+
+            const bins = store.Database.discoverBins(allocator, resolved.store_path) catch continue;
+            defer {
+                for (bins) |b| allocator.free(b);
+                allocator.free(bins);
+            }
+
+            if (ver.active) {
+                db.removeSymlinks(allocator, name) catch {};
+            }
+
+            ver.version = try db._arena.allocator().dupe(u8, resolved.version);
+            ver.store_path = try db._arena.allocator().dupe(u8, resolved.store_path);
+            ver.bins = blk: {
+                var bins_d = try db._arena.allocator().alloc([]const u8, bins.len);
+                for (bins, 0..) |b, i| {
+                    bins_d[i] = try db._arena.allocator().dupe(u8, b);
+                }
+                break :blk bins_d;
+            };
+            ver.closure = blk: {
+                var closure_d = try db._arena.allocator().alloc([]const u8, closure.len);
+                for (closure, 0..) |cp, i| {
+                    closure_d[i] = try db._arena.allocator().dupe(u8, cp);
+                }
+                break :blk closure_d;
+            };
+
+            if (ver.active) {
+                try db.installSymlinks(allocator, name);
+            }
+
+            upgraded += 1;
         }
-
-        ui.status("upgrading {s} to {s}...", .{ name, resolved.version });
-
-        const closure = fetcher.fetchClosure(allocator, resolved.store_path) catch |e| {
-            ui.warn("failed to fetch {s}: {}", .{ name, e });
-            continue;
-        };
-        defer {
-            for (closure) |cp| allocator.free(cp);
-            allocator.free(closure);
-        }
-
-        const bins = store.Database.discoverBins(allocator, resolved.store_path) catch continue;
-        defer {
-            for (bins) |b| allocator.free(b);
-            allocator.free(bins);
-        }
-
-        db.removeSymlinks(allocator, name) catch {};
-        try db.addVersion(name, resolved.version, resolved.store_path, bins, closure, .{});
-        try db.setActiveVersion(name, resolved.version);
-        try db.installSymlinks(allocator, name);
-
-        upgraded += 1;
     }
 
     if (ua.package != null and upgraded == 0) {
@@ -934,10 +991,11 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
                 ui.print("sudo /System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -t\n", .{});
                 ui.print("mount | grep -q ' on /nix ' || sudo diskutil apfs addVolume disk3 APFS nix -mountpoint /nix\n", .{});
                 ui.print("sudo chown $(whoami) /nix && mkdir -p /nix/store\n", .{});
+                ui.print("sudo mkdir -p /opt/onyx && sudo chown $(whoami) /opt/onyx\n", .{});
                 ui.dim("# Or just: onyx init --exec", .{});
             } else {
                 ui.dim("# Run this to get started:", .{});
-                ui.print("sudo mkdir -p /nix/store && sudo chown $(whoami) /nix/store\n", .{});
+                ui.print("sudo mkdir -p /nix/store /opt/onyx && sudo chown $(whoami) /nix/store /opt/onyx\n", .{});
                 ui.dim("# Or just: onyx init --exec", .{});
             }
             return;
@@ -957,8 +1015,8 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
                 \\  diskutil apfs addVolume disk3 APFS nix -mountpoint /nix
                 \\  echo 'LABEL=nix /nix apfs rw' >> /etc/fstab
                 \\fi
-                \\mkdir -p /nix/store
-                \\chown -R {s} /nix
+                \\mkdir -p /nix/store /opt/onyx
+                \\chown -R {s} /nix /opt/onyx
             , .{user});
             defer allocator.free(script);
             var child = std.process.Child.init(
@@ -982,9 +1040,9 @@ fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
                 },
             }
         } else {
-            ui.print("creating /nix/store...\n", .{});
+            ui.print("creating /nix/store and /opt/onyx...\n", .{});
             const cmd = try std.fmt.allocPrint(allocator,
-                "mkdir -p /nix/store && chown {s} /nix/store", .{user});
+                "mkdir -p /nix/store /opt/onyx && chown {s} /nix/store /opt/onyx", .{user});
             defer allocator.free(cmd);
             var child = std.process.Child.init(
                 &.{ "sudo", "sh", "-c", cmd },
@@ -1099,6 +1157,7 @@ fn cmdImplode(allocator: std.mem.Allocator, exec: bool) !void {
         } else {
             ui.print("sudo rm -rf /nix/store\n", .{});
         }
+        ui.print("sudo rm -rf /opt/onyx\n", .{});
 
         const home = std.posix.getenv("HOME") orelse "";
         ui.print("rm -rf {s}/.local/share/onyx {s}/.cache/onyx\n", .{ home, home });
@@ -1122,22 +1181,21 @@ fn cmdImplode(allocator: std.mem.Allocator, exec: bool) !void {
     defer allocator.free(bin_dir_path);
     var bin_dir = std.fs.openDirAbsolute(bin_dir_path, .{}) catch null;
     if (bin_dir) |*bd| {
-        // Remove the onyx binary itself
         bd.deleteFile("onyx") catch {};
         bd.close();
     }
 
     if (is_macos) {
-        ui.print("removing /nix volume...\n", .{});
+        ui.print("removing /nix volume and /opt/onyx...\n", .{});
         var child = std.process.Child.init(
-            &.{ "sudo", "sh", "-c", "diskutil apfs deleteVolume nix 2>/dev/null; sed -i '' '/^nix$/d' /etc/synthetic.conf; /System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -t" },
+            &.{ "sudo", "sh", "-c", "diskutil apfs deleteVolume nix 2>/dev/null; sed -i '' '/^nix$/d' /etc/synthetic.conf; /System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -t; rm -rf /opt/onyx" },
             allocator,
         );
         _ = child.spawnAndWait() catch {};
     } else {
-        ui.print("removing /nix/store...\n", .{});
+        ui.print("removing /nix/store and /opt/onyx...\n", .{});
         var child = std.process.Child.init(
-            &.{ "sudo", "rm", "-rf", "/nix/store" },
+            &.{ "sudo", "rm", "-rf", "/nix/store", "/opt/onyx" },
             allocator,
         );
         _ = child.spawnAndWait() catch {};

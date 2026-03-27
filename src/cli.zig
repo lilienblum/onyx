@@ -52,6 +52,7 @@ pub const ExecArgs = struct {
 pub const Command = union(enum) {
     install: PackageRef,
     uninstall: PackageRef,
+    info: PackageRef,
     list,
     exec: ExecArgs,
     use_cmd: PackageRef,
@@ -73,6 +74,9 @@ pub fn parse(args: []const []const u8) !Command {
     } else if (std.mem.eql(u8, cmd, "uninstall") or std.mem.eql(u8, cmd, "remove") or std.mem.eql(u8, cmd, "rm")) {
         if (args.len < 3) return error.MissingArgument;
         return .{ .uninstall = PackageRef.parse(args[2]) };
+    } else if (std.mem.eql(u8, cmd, "info")) {
+        if (args.len < 3) return error.MissingArgument;
+        return .{ .info = PackageRef.parse(args[2]) };
     } else if (std.mem.eql(u8, cmd, "list") or std.mem.eql(u8, cmd, "ls")) {
         return .list;
     } else if (std.mem.eql(u8, cmd, "exec") or std.mem.eql(u8, cmd, "x") or std.mem.eql(u8, cmd, "run")) {

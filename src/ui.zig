@@ -106,6 +106,121 @@ pub fn pkg(name: []const u8, ver: []const u8) void {
     }
 }
 
+/// Map nix system names to friendly names used in onyx.toml
+fn friendlyPlatform(sys: []const u8) []const u8 {
+    if (std.mem.eql(u8, sys, "aarch64-darwin") or std.mem.eql(u8, sys, "x86_64-darwin")) return "macos";
+    if (std.mem.eql(u8, sys, "aarch64-linux")) return "linux-arm64";
+    if (std.mem.eql(u8, sys, "x86_64-linux")) return "linux-x64";
+    return sys;
+}
+
+/// Print platforms line for nix packages (maps nix system names to friendly names).
+pub fn printPlatforms(systems: [4]?[]const u8, current_system: []const u8) void {
+    // Deduplicate: aarch64-darwin and x86_64-darwin both map to "macos"
+    var friendly: [4]?[]const u8 = .{ null, null, null, null };
+    var is_current: [4]bool = .{ false, false, false, false };
+    var count: usize = 0;
+
+    for (systems) |maybe_sys| {
+        const sys = maybe_sys orelse break;
+        const name = friendlyPlatform(sys);
+        // Deduplicate
+        var dup = false;
+        for (friendly[0..count]) |existing| {
+            if (std.mem.eql(u8, existing.?, name)) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) {
+            // Still check if this variant is current
+            if (std.mem.eql(u8, sys, current_system)) {
+                for (friendly[0..count], 0..) |existing, i| {
+                    if (std.mem.eql(u8, existing.?, name)) is_current[i] = true;
+                }
+            }
+            continue;
+        }
+        friendly[count] = name;
+        is_current[count] = std.mem.eql(u8, sys, current_system);
+        count += 1;
+    }
+
+    printPlatformsRaw(friendly, friendlyPlatform(current_system));
+}
+
+/// Print platforms line for third-party packages (already using friendly names).
+/// Current system is listed first, bold. Others are muted.
+pub fn printPlatformsRaw(platforms: [4]?[]const u8, current: []const u8) void {
+    var count: usize = 0;
+    for (platforms) |p| {
+        if (p != null) count += 1;
+    }
+
+    if (count == 0) {
+        detail("no prebuilt binaries available", .{});
+        return;
+    }
+
+    // Sort: current system first
+    var sorted: [4]?[]const u8 = .{ null, null, null, null };
+    var si: usize = 0;
+    var available_here = false;
+
+    // Current platform first
+    for (platforms) |maybe_p| {
+        const p = maybe_p orelse continue;
+        if (std.mem.eql(u8, p, current)) {
+            sorted[si] = p;
+            si += 1;
+            available_here = true;
+            break;
+        }
+    }
+    // Then the rest
+    for (platforms) |maybe_p| {
+        const p = maybe_p orelse continue;
+        if (!std.mem.eql(u8, p, current)) {
+            sorted[si] = p;
+            si += 1;
+        }
+    }
+
+    if (no_color) {
+        out("Platforms: ", .{});
+        var first = true;
+        for (sorted) |maybe_p| {
+            const p = maybe_p orelse continue;
+            if (!first) out(", ", .{});
+            first = false;
+            if (std.mem.eql(u8, p, current)) {
+                out("{s}", .{p});
+            } else {
+                out("{s}", .{p});
+            }
+        }
+        out("\n", .{});
+    } else {
+        out("Platforms: ", .{});
+        var first = true;
+        for (sorted) |maybe_p| {
+            const p = maybe_p orelse continue;
+            if (!first) out(theme.muted ++ ", " ++ theme.reset, .{});
+            first = false;
+            if (std.mem.eql(u8, p, current)) {
+                out(theme.bold ++ "{s}" ++ theme.reset, .{p});
+            } else {
+                out(theme.muted ++ "{s}" ++ theme.reset, .{p});
+            }
+        }
+        out("\n", .{});
+    }
+
+    if (!available_here) {
+        warn("not available for {s}", .{current});
+    }
+}
+
 pub fn downloadProgress(done: usize, total: usize, name: []const u8) void {
     if (no_color) {
         std.debug.print("   [{d}/{d}] {s}\n", .{ done, total, name });
@@ -154,6 +269,7 @@ const usage_plain =
     \\Commands:
     \\  install   postgresql@18            Install a package
     \\  uninstall postgresql               Uninstall a package
+    \\  info      nodejs                   Show package details
     \\  list                               Show installed packages
     \\  exec      node -b npx -- vitest    Run without installing
     \\  use       user:repo@2              Switch active version
@@ -189,6 +305,7 @@ const usage_color =
     B ++ "Commands:" ++ R ++ "\n" ++
     "  " ++ V ++ "install" ++ R ++ "   " ++ D ++ "postgresql@18" ++ R ++ "            Install a package\n" ++
     "  " ++ V ++ "uninstall" ++ R ++ " " ++ D ++ "postgresql" ++ R ++ "               Uninstall a package\n" ++
+    "  " ++ V ++ "info" ++ R ++ "      " ++ D ++ "nodejs" ++ R ++ "                   Show package details\n" ++
     "  " ++ V ++ "list" ++ R ++ "                               Show installed packages\n" ++
     "  " ++ V ++ "exec" ++ R ++ "      " ++ D ++ "node -b npx -- vitest" ++ R ++ "    Run without installing\n" ++
     "  " ++ V ++ "use" ++ R ++ "       " ++ D ++ "user:repo@2" ++ R ++ "              Switch active version\n" ++

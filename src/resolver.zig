@@ -71,7 +71,11 @@ fn resolveInner(allocator: std.mem.Allocator, name: []const u8, version: ?[]cons
     const root = parsed.value;
 
     // Try to find the store path for our system
-    const store_path = try findStorePath(root) orelse return error.PackageNotFound;
+    const store_path = try findStorePath(root) orelse {
+        // Check if the package exists for other platforms
+        if (hasAnySystem(root)) return error.NoPlatformBuild;
+        return error.PackageNotFound;
+    };
     const resolved_version = findVersion(root) orelse actual_version;
 
     return ResolvedPackage{
@@ -142,6 +146,58 @@ fn extractOutputPath(val: std.json.Value) ?[]const u8 {
     return null;
 }
 
+/// Check if the response has data for any system (even if not ours).
+fn hasAnySystem(root: std.json.Value) bool {
+    const obj = switch (root) {
+        .object => |o| o,
+        else => return false,
+    };
+    // Check for direct system keys (aarch64-linux, x86_64-darwin, etc.)
+    const known = [_][]const u8{ "aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin" };
+    for (known) |s| {
+        if (obj.get(s) != null) return true;
+    }
+    // Check systems object
+    if (obj.get("systems")) |systems| {
+        if (systems == .object and systems.object.count() > 0) return true;
+    }
+    return false;
+}
+
+/// Return the list of available system keys from a resolve response.
+pub fn availableSystems(root: std.json.Value) [4]?[]const u8 {
+    var result = [_]?[]const u8{ null, null, null, null };
+    const obj = switch (root) {
+        .object => |o| o,
+        else => return result,
+    };
+
+    const known = [_][]const u8{ "aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin" };
+
+    // Check top-level system keys
+    var i: usize = 0;
+    for (known) |s| {
+        if (obj.get(s) != null) {
+            result[i] = s;
+            i += 1;
+        }
+    }
+    if (i > 0) return result;
+
+    // Check systems object
+    if (obj.get("systems")) |systems| {
+        if (systems == .object) {
+            for (known) |s| {
+                if (systems.object.get(s) != null) {
+                    result[i] = s;
+                    i += 1;
+                }
+            }
+        }
+    }
+    return result;
+}
+
 fn findVersion(root: std.json.Value) ?[]const u8 {
     const obj = switch (root) {
         .object => |o| o,
@@ -169,6 +225,73 @@ pub fn httpGet(allocator: std.mem.Allocator, client: *std.http.Client, url: []co
     return aw.toOwnedSlice();
 }
 
+pub const PackageInfo = struct {
+    name: []const u8,
+    version: []const u8,
+    summary: []const u8,
+    systems: [4]?[]const u8,
+    store_path: ?[]const u8,
+    _parsed: std.json.Parsed(std.json.Value),
+    _allocator: std.mem.Allocator,
+    _name_owned: bool,
+
+    pub fn deinit(self: *PackageInfo) void {
+        if (self._name_owned) self._allocator.free(self.name);
+        self._parsed.deinit();
+    }
+};
+
+pub fn info(allocator: std.mem.Allocator, name: []const u8, version: ?[]const u8) !PackageInfo {
+    var client: std.http.Client = .{ .allocator = allocator };
+    defer client.deinit();
+
+    const resolved_name = resolveAliasInner(allocator, name, false) catch name;
+    errdefer if (resolved_name.ptr != name.ptr) allocator.free(resolved_name);
+
+    const actual_version = version orelse "latest";
+
+    const url = try std.fmt.allocPrint(
+        allocator,
+        "https://search.devbox.sh/v2/resolve?name={s}&version={s}",
+        .{ resolved_name, actual_version },
+    );
+    defer allocator.free(url);
+
+    const body = try httpGet(allocator, &client, url);
+    defer allocator.free(body);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{
+        .allocate = .alloc_always,
+    });
+    errdefer parsed.deinit();
+
+    const root = parsed.value;
+    const obj = switch (root) {
+        .object => |o| o,
+        else => return error.PackageNotFound,
+    };
+
+    const resolved_version = findVersion(root) orelse actual_version;
+    const summary = if (obj.get("summary")) |s| switch (s) {
+        .string => s.string,
+        else => "",
+    } else "";
+
+    const systems = availableSystems(root);
+    const store_path = try findStorePath(root);
+
+    return PackageInfo{
+        .name = resolved_name,
+        .version = resolved_version,
+        .summary = summary,
+        .systems = systems,
+        .store_path = store_path,
+        ._allocator = allocator,
+        ._name_owned = resolved_name.ptr != name.ptr,
+        ._parsed = parsed,
+    };
+}
+
 /// Extract the hash portion from a nix store path.
 /// E.g., "/nix/store/abc123-name" -> "abc123"
 pub fn storePathHash(store_path: []const u8) ![]const u8 {
@@ -188,77 +311,48 @@ pub fn storePathBasename(store_path: []const u8) ![]const u8 {
     return store_path[prefix.len..];
 }
 
-// --- Registry ---
+// --- Aliases ---
 
-var registry_base_override: ?[]const u8 = null;
+const aliases_url = "https://raw.githubusercontent.com/lilienblum/onyx/master/aliases.json";
 
-pub fn registryBase() []const u8 {
-    if (registry_base_override) |o| return o;
-    if (std.posix.getenv("ONYX_REGISTRY")) |env| {
-        registry_base_override = env;
-        return env;
-    }
-    return "https://raw.githubusercontent.com/lilienblum/onyx/registry/v0";
-}
-
-pub fn registryUrl(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ registryBase(), path });
-}
-
-fn ensureIndex(allocator: std.mem.Allocator) ![]const u8 {
-    return ensureIndexInner(allocator, false);
-}
-
-fn ensureIndexFresh(allocator: std.mem.Allocator) ![]const u8 {
-    return ensureIndexInner(allocator, true);
-}
-
-/// Fetch and cache index.json. If refresh=true, re-fetch if older than 1 day.
-/// If refresh=false, use cache regardless of age.
-fn ensureIndexInner(allocator: std.mem.Allocator, refresh: bool) ![]const u8 {
+fn ensureAliases(allocator: std.mem.Allocator, refresh: bool) ![]const u8 {
     const cache_dir = try xdg.cacheDir(allocator);
     defer allocator.free(cache_dir);
 
     try xdg.makeDirAbsoluteRecursive(cache_dir);
 
-    const index_path = try std.fmt.allocPrint(allocator, "{s}/index.json", .{cache_dir});
-    defer allocator.free(index_path);
+    const cache_path = try std.fmt.allocPrint(allocator, "{s}/aliases.json", .{cache_dir});
+    defer allocator.free(cache_path);
 
     // Check cache: fast path uses any age, refresh path requires < 1 day
     const stale = blk: {
         if (!refresh) break :blk false;
-        const file = std.fs.openFileAbsolute(index_path, .{}) catch break :blk true;
+        const file = std.fs.openFileAbsolute(cache_path, .{}) catch break :blk true;
         defer file.close();
         const stat = file.stat() catch break :blk true;
         break :blk (std.time.nanoTimestamp() - stat.mtime >= 86400 * std.time.ns_per_s);
     };
     if (!stale) {
-        if (std.fs.cwd().readFileAlloc(allocator, index_path, 1 << 20)) |content| {
+        if (std.fs.cwd().readFileAlloc(allocator, cache_path, 1 << 20)) |content| {
             return content;
         } else |_| {}
     }
 
-    // Fetch from registry branch
-    const url = try registryUrl(allocator, "index.json");
-    defer allocator.free(url);
-
     var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
 
-    const body = httpGet(allocator, &client, url) catch {
+    const body = httpGet(allocator, &client, aliases_url) catch {
         // Offline fallback: return stale cache if available
-        return std.fs.cwd().readFileAlloc(allocator, index_path, 1 << 20) catch return error.IndexFetchFailed;
+        return std.fs.cwd().readFileAlloc(allocator, cache_path, 1 << 20) catch return error.IndexFetchFailed;
     };
 
     // Cache it
-    const file = std.fs.createFileAbsolute(index_path, .{}) catch return body;
+    const file = std.fs.createFileAbsolute(cache_path, .{}) catch return body;
     file.writeAll(body) catch {};
     file.close();
 
     return body;
 }
-
-// --- Index-based alias resolution ---
 
 pub fn resolveAlias(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     return resolveAliasInner(allocator, name, false);
@@ -269,7 +363,7 @@ pub fn resolveAliasFresh(allocator: std.mem.Allocator, name: []const u8) ![]cons
 }
 
 fn resolveAliasInner(allocator: std.mem.Allocator, name: []const u8, refresh: bool) ![]const u8 {
-    const content = ensureIndexInner(allocator, refresh) catch return name;
+    const content = ensureAliases(allocator, refresh) catch return name;
     defer allocator.free(content);
 
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{
@@ -282,14 +376,9 @@ fn resolveAliasInner(allocator: std.mem.Allocator, name: []const u8, refresh: bo
         else => return name,
     };
 
-    // Check aliases ("a" key)
-    if (root.get("a")) |aliases_val| {
-        if (aliases_val == .object) {
-            if (aliases_val.object.get(name)) |target| {
-                if (target == .string) {
-                    return try allocator.dupe(u8, target.string);
-                }
-            }
+    if (root.get(name)) |target| {
+        if (target == .string) {
+            return try allocator.dupe(u8, target.string);
         }
     }
 
