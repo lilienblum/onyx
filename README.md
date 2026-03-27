@@ -75,16 +75,21 @@ Third-party packages (`user:repo`, `domain.com`) skip the nix store entirely and
 
 ```mermaid
 flowchart LR
-    A[onyx install nodejs@22] --> B[Resolve alias]
-    B --> C[Nixhub API]
-    C --> D[cache.nixos.org]
-    D --> E[Install to /nix/store/]
-    E -->|symlink| F[~/.local/bin/]
+    A[onyx install pkg] --> B{Third-party?}
+    B -->|no| C[Resolve alias]
+    C --> D[Nixhub API]
+    D --> E[cache.nixos.org]
+    E --> F[/nix/store/]
+    B -->|yes| G[Fetch onyx.toml]
+    G --> H[Download binary]
+    H --> I[/opt/onyx/packages/]
+    F -->|symlink| J[~/.local/bin/]
+    I -->|symlink| J
 ```
 
-Aliases (`node` → `nodejs`) are resolved first, then the Nixhub API finds the package, its dependency closure is fetched in parallel from `cache.nixos.org`, unpacked to `/nix/store/`, and symlinked into `~/.local/bin/`.
+**Nix packages** — aliases (`node` → `nodejs`) are resolved first, then the Nixhub API finds the package, its dependency closure is fetched in parallel from `cache.nixos.org`, unpacked to `/nix/store/`, and symlinked into `~/.local/bin/`.
 
-Third-party packages (`user:repo`, `domain.com`) fetch an `onyx.toml` manifest, download the binary for your platform, verify SHA256, and install directly — no nix store involved.
+**Third-party packages** (`user:repo`, `domain.com`) — fetch an `onyx.toml` manifest, download the binary for your platform, verify SHA256, and install to `/opt/onyx/packages/`.
 
 ## Commands
 
