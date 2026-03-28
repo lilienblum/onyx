@@ -139,8 +139,10 @@ jobs:
             name: onyx-x86_64-linux
           - target: aarch64-linux-musl
             name: onyx-aarch64-linux
+          - target: x86_64-macos
+            name: onyx-x86_64-darwin
           - target: aarch64-macos
-            name: onyx-aarch64-macos
+            name: onyx-aarch64-darwin
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -152,11 +154,9 @@ jobs:
       - name: Build
         run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSmall
       - name: Package
-        run: |
-          cp zig-out/bin/onyx ${{ matrix.name }}
-          tar czf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+        run: cp zig-out/bin/onyx ${{ matrix.name }}
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: ${{ matrix.name }}.tar.gz
+          files: ${{ matrix.name }}

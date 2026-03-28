@@ -917,18 +917,68 @@ fn cmdUpgrade(allocator: std.mem.Allocator, ua: cli.UpgradeArgs) !void {
 }
 
 fn selfUpdate(allocator: std.mem.Allocator) !void {
-    const target = resolver.system;
-    const url = try std.fmt.allocPrint(
-        allocator,
-        "https://github.com/lilienblum/onyx/releases/latest/download/onyx-{s}",
-        .{target},
-    );
-    defer allocator.free(url);
-
     ui.print("checking for updates...\n", .{});
 
     var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
+
+    // Check latest version via GitHub API
+    var version_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer version_buf.deinit();
+
+    const api_result = client.fetch(.{
+        .location = .{ .url = "https://api.github.com/repos/lilienblum/onyx/releases/latest" },
+        .response_writer = &version_buf.writer,
+    }) catch {
+        ui.print("could not check for onyx updates\n", .{});
+        return;
+    };
+
+    if (api_result.status != .ok) {
+        ui.print("could not check for onyx updates\n", .{});
+        return;
+    }
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, version_buf.written(), .{}) catch {
+        ui.print("could not check for onyx updates\n", .{});
+        return;
+    };
+    defer parsed.deinit();
+
+    const tag = switch (parsed.value) {
+        .object => |obj| if (obj.get("tag_name")) |t| switch (t) {
+            .string => |s| s,
+            else => null,
+        } else null,
+        else => null,
+    } orelse {
+        ui.print("could not check for onyx updates\n", .{});
+        return;
+    };
+
+    // Strip "onyx-v" prefix from tag to get version
+    const latest = if (std.mem.startsWith(u8, tag, "onyx-v"))
+        tag["onyx-v".len..]
+    else if (std.mem.startsWith(u8, tag, "v"))
+        tag["v".len..]
+    else
+        tag;
+
+    if (std.mem.eql(u8, latest, version)) {
+        ui.print("onyx is up to date ({s})\n", .{version});
+        return;
+    }
+
+    ui.status("updating onyx {s} → {s}...", .{ version, latest });
+
+    // Download the binary for this platform
+    const target = resolver.system;
+    const url = try std.fmt.allocPrint(
+        allocator,
+        "https://github.com/lilienblum/onyx/releases/download/{s}/onyx-{s}",
+        .{ tag, target },
+    );
+    defer allocator.free(url);
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
@@ -937,12 +987,12 @@ fn selfUpdate(allocator: std.mem.Allocator) !void {
         .location = .{ .url = url },
         .response_writer = &aw.writer,
     }) catch {
-        ui.print("could not check for onyx updates\n", .{});
+        ui.print("could not download onyx update\n", .{});
         return;
     };
 
     if (result.status != .ok) {
-        ui.print("no onyx update available\n", .{});
+        ui.print("could not download onyx update\n", .{});
         return;
     }
 
@@ -977,7 +1027,7 @@ fn selfUpdate(allocator: std.mem.Allocator) !void {
         return;
     };
 
-    ui.print("onyx updated\n", .{});
+    ui.ok("updated onyx to {s}", .{latest});
 }
 
 fn cmdInit(allocator: std.mem.Allocator, exec: bool) !void {
