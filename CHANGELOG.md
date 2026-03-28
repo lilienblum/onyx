@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/lilienblum/onyx/compare/onyx-v0.2.0...onyx-v0.3.0) (2026-03-28)
+
+
+### Features
+
+* improve self-update with version check and fix release artifacts ([f78f55d](https://github.com/lilienblum/onyx/commit/f78f55d002e02d9245238c37d67800a175ddab44))
+
 ## [0.2.0](https://github.com/lilienblum/onyx/compare/onyx-v0.1.0...onyx-v0.2.0) (2026-03-27)
 
 
